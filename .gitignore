@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+results/
+# lab slides kept local, not published
+microgrid-architecture.jpg
+research-methodology-slide.jpg
+microgrid-architecture.png
+*.pkl

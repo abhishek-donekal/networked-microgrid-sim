@@ -1,0 +1,557 @@
+<title>Microgrid Simulation Playback</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: transport bar on top, live one-line diagram as the centrepiece, time-series charts below sharing one playhead. */
+:root {
+  --page: #f9f9f7; --card: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10); --wash: rgba(11,11,11,.05);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s7: #6250d6;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+  --box: #f1f0ec; --flow: #0b0b0b;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0d0d0d; --card: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10); --wash: rgba(255,255,255,.07);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s7: #9085e9;
+    --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+    --box: #242422; --flow: #f0efec; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0d0d0d; --card: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10); --wash: rgba(255,255,255,.07);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s7: #9085e9;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+  --box: #242422; --flow: #f0efec; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 var(--sans); }
+.wrap { max-width: 1280px; margin: 0 auto; padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 14px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+h2 { font-size: 13px; margin: 0; font-weight: 600; }
+.sub { color: var(--ink2); margin: 2px 0 0; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.scroll { overflow-x: auto; }
+
+.transport { display: flex; flex-direction: column; gap: 10px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+button, select { font: inherit; color: var(--ink); background: var(--box); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover, select:hover { background: var(--wash); }
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+#play { min-width: 84px; font-weight: 600; background: var(--s1); color: #fff; border-color: transparent; }
+#scrub { flex: 1 1 220px; min-width: 0; accent-color: var(--s1); }
+#clock { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 112px; text-align: right; }
+.events { display: flex; flex-wrap: wrap; gap: 6px; }
+.events button { font-size: 12px; padding: 3px 9px; color: var(--ink2); }
+.events button b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.events button.past { border-color: var(--axis); color: var(--ink); }
+
+.status { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 11px 3px 4px; font-size: 12.5px; }
+.pill i { font-style: normal; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--muted); }
+.pill.good i { background: var(--good); } .pill.warn i { background: var(--warn); color: #0b0b0b; } .pill.crit i { background: var(--crit); }
+.pill span { color: var(--ink2); } .pill b { font-weight: 600; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tile { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--ink2); }
+.tile .v { font-size: 22px; font-weight: 600; line-height: 1.25; }
+.tile .v small { font-size: 13px; font-weight: 500; color: var(--ink2); }
+.tile .d { font-size: 12px; color: var(--muted); }
+
+#diagram { display: block; width: 100%; min-width: 900px; height: auto; font-family: var(--sans); }
+#diagram text { fill: var(--ink); font-size: 11px; }
+#diagram .dim { fill: var(--ink2); }
+#diagram .val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#diagram .ttl { font-size: 14px; font-weight: 600; }
+#diagram .wire { stroke: var(--axis); stroke-width: 2; fill: none; }
+#diagram .flow { stroke: var(--flow); stroke-width: 2.6; fill: none; stroke-dasharray: 5 11; stroke-linecap: round; }
+#diagram .bus { stroke-width: 7; }
+#diagram .bus.ac { stroke: var(--s1); } #diagram .bus.dc { stroke: var(--s2); }
+#diagram .bus.dead { stroke: var(--muted); }
+#diagram .box { fill: var(--box); stroke: var(--axis); stroke-width: 1.2; }
+#diagram .frame { fill: none; stroke: var(--axis); stroke-width: 1.2; stroke-dasharray: 4 4; }
+#diagram .ibr { fill: var(--card); stroke: var(--ink); stroke-width: 1.8; }
+#diagram .brk { fill: var(--ink); stroke: var(--ink); stroke-width: 1.6; }
+#diagram .brk.open { fill: var(--card); stroke: var(--crit); }
+#diagram .brkx { stroke: var(--crit); stroke-width: 1.6; }
+#diagram .socbg { fill: var(--grid); } #diagram .socfg { fill: var(--s3); }
+.key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink2); margin-top: 8px; }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 4px; border-radius: 2px; display: inline-block; }
+.sq { width: 10px; height: 10px; display: inline-block; border: 1.6px solid var(--ink); background: var(--ink); }
+.sq.open { background: var(--card); border-color: var(--crit); }
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 14px; }
+.chart .head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { font-size: 12px; padding: 2px 9px; }
+.tabs button[aria-pressed="true"] { background: var(--ink); color: var(--card); }
+.legend { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--ink2); margin: 6px 0 4px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.plot { width: 100%; display: block; touch-action: none; cursor: ew-resize; }
+.plot text { fill: var(--muted); font-size: 11px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
+.plot .g { stroke: var(--grid); stroke-width: 1; } .plot .ax { stroke: var(--axis); stroke-width: 1; }
+.plot .ev { stroke: var(--axis); stroke-width: 1; stroke-dasharray: 3 3; }
+.plot .ln { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.plot .cur { stroke: var(--ink); stroke-width: 1; }
+.plot .dot { stroke: var(--card); stroke-width: 2; }
+
+details summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+table { border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+td, th { text-align: left; padding: 3px 18px 3px 0; border-bottom: 1px solid var(--grid); }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.note { color: var(--muted); font-size: 12px; margin: 0; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1 id="title">Microgrid Simulation Playback</h1>
+    <p class="sub" id="subtitle"></p>
+  </header>
+
+  <section class="card transport" aria-label="Playback controls">
+    <div class="row">
+      <button id="play" type="button">Play</button>
+      <label class="row" for="speed" style="gap:6px">Speed
+        <select id="speed">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+        </select>
+      </label>
+      <input id="scrub" type="range" min="0" value="0" step="1" aria-label="Simulation time">
+      <output id="clock" for="scrub"></output>
+    </div>
+    <div class="events" id="events" aria-label="Scenario events"></div>
+  </section>
+
+  <section class="status" id="status" aria-live="off"></section>
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <h2>System at this instant</h2>
+    <div class="scroll"><svg id="diagram" viewBox="0 0 1200 745" role="img" aria-label="Live one-line diagram of the hybrid AC/DC microgrid system"></svg></div>
+    <div class="key">
+      <span><i class="sw" style="background:var(--s1)"></i>AC bus</span>
+      <span><i class="sw" style="background:var(--s2)"></i>DC bus</span>
+      <span><i class="sq"></i>Breaker closed</span>
+      <span><i class="sq open"></i>Breaker open</span>
+      <span>Moving dashes show the direction of power flow; faster means more power.</span>
+      <span>Device values: + is power into the bus, − is power drawn from it.</span>
+    </div>
+  </section>
+
+  <section class="charts" id="charts"></section>
+
+  <details class="card" id="tablebox">
+    <summary>All recorded values at this instant</summary>
+    <div class="scroll"><table id="table"></table></div>
+  </details>
+
+  <p class="note" id="note"></p>
+</div>
+
+<script>const DATA = /*__DATA__*/null;</script>
+<script>
+(function () {
+  "use strict";
+  const T = DATA.t, S = DATA.s, N = T.length, T0 = T[0], TEND = T[N - 1];
+  const VN = DATA.meta.v_nom, F0 = DATA.meta.f0;
+  const g = (k, i) => (S[k] ? S[k][i] : 0);
+  const $ = (id) => document.getElementById(id);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = (tag, attrs, parent, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const html = (tag, cls, parent, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const kw = (x, signed) => (signed && x > 0.05 ? "+" : "") + (Math.abs(x) < 0.05 ? "0.0" : x.toFixed(1)).replace("-", "−") + " kW";
+  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  $("title").textContent = DATA.meta.title;
+  $("subtitle").textContent = DATA.meta.subtitle;
+  $("note").textContent = DATA.meta.note;
+
+  /* ------------------------------------------------------------------ diagram */
+  const D = $("diagram");
+  const updaters = [];   // functions (i) run when the frame changes
+  const flows = [];      // {el, value(i), off}
+
+  function wire(d, value) {
+    svg("path", { class: "wire", d }, D);
+    const el = svg("path", { class: "flow", d }, D);
+    flows.push({ el, value, off: 0 });
+  }
+  function bus(key, x1, x2, y, kind, label, lx, ly, anchor) {
+    const ln = svg("line", { class: "bus " + kind, x1, x2, y1: y, y2: y, "stroke-linecap": "butt" }, D);
+    const tx = svg("text", { x: lx, y: ly, "text-anchor": anchor }, D);
+    updaters.push((i) => {
+      if (kind === "ac") {
+        const live = g("energized." + key, i) > 0.5;
+        ln.setAttribute("class", "bus ac" + (live ? "" : " dead"));
+        tx.textContent = label + " · " + (live ? g("f." + key, i).toFixed(3) + " Hz" : "de-energised");
+      } else {
+        const v = g("v." + key, i);
+        tx.textContent = (label ? label + " · " : "") + v.toFixed(0) + " V (" + (v / VN).toFixed(2) + " pu)";
+      }
+    });
+  }
+  function breaker(name, x, y) {
+    const r = svg("rect", { class: "brk", x: x - 6, y: y - 6, width: 12, height: 12 }, D);
+    const x1 = svg("line", { class: "brkx", x1: x - 10, y1: y - 10, x2: x + 10, y2: y + 10 }, D);
+    svg("title", {}, r, "Breaker: " + name);
+    updaters.push((i) => {
+      const open = g("closed." + name, i) < 0.5;
+      r.setAttribute("class", "brk" + (open ? " open" : ""));
+      x1.setAttribute("visibility", open ? "visible" : "hidden");
+    });
+  }
+  function loadBox(name, x, y, w, label, path) {
+    wire(path, (i) => -g("p." + name, i));
+    svg("rect", { class: "box", x, y, width: w, height: 50, rx: 3 }, D);
+    svg("text", { class: "dim", x: x + w / 2, y: y + 19, "text-anchor": "middle" }, D, label);
+    const v = svg("text", { class: "val", x: x + w / 2, y: y + 38, "text-anchor": "middle" }, D);
+    updaters.push((i) => { v.textContent = kw(-g("p." + name, i)); });
+  }
+  const NAMES = { Battery: "Battery", FuelCell: "Fuel cell", EV: "EV", SolarPV: "Solar PV", Wind: "Wind", SuperCap: "SuperCap" };
+  function device(name, cx) {
+    const kind = name.split(".")[1], x = cx - 35, y = 560;
+    wire(`M${cx},${y} L${cx},500`, (i) => g("p." + name, i));
+    svg("rect", { class: "box", x, y, width: 70, height: 80, rx: 3 }, D);
+    svg("text", { x: cx, y: y + 18, "text-anchor": "middle" }, D, NAMES[kind]);
+    const v = svg("text", { class: "val", x: cx, y: y + 38, "text-anchor": "middle" }, D);
+    const extra = svg("text", { class: "dim", x: cx, y: y + 71, "text-anchor": "middle", "font-size": 10 }, D);
+    let bar = null;
+    if (S["soc." + name]) {
+      svg("rect", { class: "socbg", x: cx - 27, y: y + 48, width: 54, height: 6, rx: 3 }, D);
+      bar = svg("rect", { class: "socfg", x: cx - 27, y: y + 48, width: 0, height: 6, rx: 3 }, D);
+    }
+    updaters.push((i) => {
+      v.textContent = kw(g("p." + name, i), true).replace(" kW", "");
+      if (bar) {
+        const soc = g("soc." + name, i);
+        bar.setAttribute("width", Math.max(0, 54 * soc));
+        extra.textContent = "charge " + (soc * 100).toFixed(1) + "%";
+      } else if (S["avail." + name]) {
+        extra.textContent = "of " + g("avail." + name, i).toFixed(1) + " kW";
+      } else {
+        extra.textContent = "kW";
+      }
+    });
+  }
+  function ibr(name, label, cx, acNode) {
+    const flowVal = (i) => g("p." + name, i);
+    wire(`M${cx},180 L${cx},225`, flowVal);
+    wire(`M${cx},285 L${cx},330`, flowVal);
+    svg("rect", { class: "ibr", x: cx - 78, y: 225, width: 156, height: 60, rx: 3 }, D);
+    const a = svg("text", { class: "ttl", x: cx, y: 244, "text-anchor": "middle", "font-size": 12 }, D);
+    const b = svg("text", { class: "val", x: cx, y: 262, "text-anchor": "middle" }, D);
+    const c = svg("text", { class: "dim", x: cx, y: 277, "text-anchor": "middle", "font-size": 10 }, D);
+    updaters.push((i) => {
+      const p = g("p." + name, i);
+      a.textContent = label + " · " + (g("gfm." + name, i) > 0.5 ? "grid-forming" : "grid-following");
+      b.textContent = kw(Math.abs(p));
+      c.textContent = Math.abs(p) < 0.05 ? "no transfer" : p > 0 ? "AC → DC" : "DC → AC";
+    });
+  }
+
+  // microgrid frames first (behind everything)
+  [[30, 440, "Microgrid 01"], [500, 320, "Microgrid 02"], [850, 320, "Microgrid 03"]].forEach(([x, w, t]) => {
+    svg("rect", { class: "frame", x, y: 400, width: w, height: 330, rx: 6 }, D);
+    svg("text", { class: "ttl", x: x + w / 2, y: 715, "text-anchor": "middle" }, D, t);
+  });
+
+  // AC side
+  wire("M600,60 L600,110", (i) => g("p.grid", i));
+  svg("rect", { class: "box", x: 530, y: 10, width: 140, height: 50, rx: 3 }, D);
+  svg("text", { class: "ttl", x: 600, y: 30, "text-anchor": "middle", "font-size": 12 }, D, "Utility grid");
+  const gridTxt = svg("text", { class: "val", x: 600, y: 49, "text-anchor": "middle" }, D);
+  updaters.push((i) => {
+    const p = g("p.grid", i), on = g("closed.grid", i) > 0.5;
+    gridTxt.textContent = !on ? "disconnected" : kw(Math.abs(p)) + (p >= 0 ? " import" : " export");
+  });
+  const acIbr = (n, i) => { const p = g("p." + n, i); return p >= 0 ? p / 0.97 : p * 0.97; };
+  wire("M420,110 L420,145 L250,145 L250,180", (i) => g("closed.feeder_AC1", i) > 0.5 ? -g("p.ACLoad.1", i) + acIbr("IBR01", i) : 0);
+  wire("M780,110 L780,145 L950,145 L950,180", (i) => g("closed.feeder_AC2", i) > 0.5 ? -g("p.ACLoad.2", i) + acIbr("IBR02", i) : 0);
+  loadBox("ACLoad.common", 395, 30, 110, "Common AC load", "M450,110 L450,80");
+  loadBox("ACLoad.1", 135, 110, 100, "Local AC load 1", "M185,180 L185,160");
+  loadBox("ACLoad.2", 965, 110, 100, "Local AC load 2", "M1015,180 L1015,160");
+  ibr("IBR01", "IBR 01", 250, "AC1");
+  ibr("IBR02", "IBR 02", 950, "AC2");
+
+  // DC side
+  wire("M420,330 L420,362 L580,362 L580,330", (i) => g("i.tie", i) * g("v.DC1", i) / 1000);
+  const tieTxt = svg("text", { class: "dim", x: 500, y: 384, "text-anchor": "middle" }, D);
+  updaters.push((i) => {
+    const p = g("i.tie", i) * g("v.DC1", i) / 1000;
+    tieTxt.textContent = g("closed.tie", i) < 0.5 ? "Tie-line open" : "Tie-line " + kw(Math.abs(p)) + (Math.abs(p) < 0.05 ? "" : p > 0 ? " →" : " ←");
+  });
+  [["feeder_MG1", 250, "DC1"], ["feeder_MG2", 660, "DCC"], ["feeder_MG3", 1010, "DCC"]].forEach(([n, x, up]) => {
+    wire(`M${x},330 L${x},500`, (i) => g("i." + n, i) * g("v." + up, i) / 1000);
+  });
+  loadBox("DCLoad.common", 640, 255, 110, "Common DC load", "M695,330 L695,305");
+  loadBox("MG1.Load", 45, 415, 100, "Local DC load", "M95,500 L95,465");
+  loadBox("MG2.Load", 515, 415, 100, "Local DC load", "M565,500 L565,465");
+  loadBox("MG3.Load", 865, 415, 100, "Local DC load", "M915,500 L915,465");
+  const DEV = { "MG1.Battery": 85, "MG1.FuelCell": 170, "MG1.EV": 255, "MG1.SolarPV": 340, "MG1.Wind": 425,
+    "MG2.SuperCap": 545, "MG2.Battery": 622, "MG2.FuelCell": 699, "MG2.EV": 776,
+    "MG3.Battery": 910, "MG3.FuelCell": 1010, "MG3.EV": 1110 };
+  for (const n in DEV) if (S["p." + n]) device(n, DEV[n]);
+
+  // buses on top of wires
+  bus("MAIN", 400, 800, 110, "ac", "Main AC bus", 812, 114, "start");
+  bus("AC1", 130, 370, 180, "ac", "AC bus 1", 262, 199, "start");
+  bus("AC2", 830, 1070, 180, "ac", "AC bus 2", 938, 199, "end");
+  bus("DC1", 50, 450, 330, "dc", "DC bus 1", 50, 320, "start");
+  bus("DCC", 550, 1150, 330, "dc", "Common DC bus", 1150, 320, "end");
+  bus("MG1", 45, 455, 500, "dc", "", 455, 489, "end");
+  bus("MG2", 508, 812, 500, "dc", "", 812, 489, "end");
+  bus("MG3", 865, 1155, 500, "dc", "", 1155, 489, "end");
+  breaker("grid", 600, 85); breaker("feeder_AC1", 335, 145); breaker("feeder_AC2", 865, 145);
+  breaker("tie", 500, 362); breaker("feeder_MG1", 250, 365); breaker("feeder_MG2", 660, 365); breaker("feeder_MG3", 1010, 365);
+
+  /* ------------------------------------------------------------------ status + tiles */
+  const keys = Object.keys(S);
+  const dcBuses = keys.filter((k) => k.startsWith("v.")).map((k) => k.slice(2));
+  const loadKeys = keys.filter((k) => k.startsWith("p.") && /Load/.test(k));
+  const unservedKeys = keys.filter((k) => k.startsWith("unserved."));
+  const renKeys = keys.filter((k) => k.startsWith("avail.")).map((k) => k.slice(6));
+  const stoKeys = keys.filter((k) => k.startsWith("soc.")).map((k) => k.slice(4));
+  const fcKeys = keys.filter((k) => /^p\..*FuelCell$/.test(k));
+  const sum = (ks, i, pre) => ks.reduce((a, k) => a + g((pre || "") + k, i), 0);
+
+  function pill(label) {
+    const p = html("div", "pill", $("status"));
+    const ic = html("i", "", p), s = html("span", "", p, label), b = html("b", "", p);
+    return (cls, icon, text) => { p.className = "pill " + cls; ic.textContent = icon; b.textContent = text; };
+  }
+  const pGrid = pill("Grid"), pI1 = pill("IBR 01"), pI2 = pill("IBR 02"), pTie = pill("Tie-line"),
+    pVolt = pill("DC voltage"), pUns = pill("AC load");
+  function tile(label) {
+    const t = html("div", "tile", $("tiles"));
+    html("div", "k", t, label);
+    const v = html("div", "v", t), d = html("div", "d", t);
+    return (value, unit, detail) => { v.textContent = value + " "; html("small", "", v, unit); d.textContent = detail; };
+  }
+  const tV = tile("Lowest DC bus voltage"), tF = tile("AC frequency"), tG = tile("Grid exchange"),
+    tL = tile("Load served"), tR = tile("Renewable output"), tS = tile("Storage, net"), tFC = tile("Fuel cells");
+
+  updaters.push((i) => {
+    const on = g("closed.grid", i) > 0.5;
+    pGrid(on ? "good" : "warn", on ? "✓" : "!", on ? "Connected" : "Islanded");
+    pI1("", "~", g("gfm.IBR01", i) > 0.5 ? "Grid-forming" : "Grid-following");
+    pI2("", "~", g("gfm.IBR02", i) > 0.5 ? "Grid-forming" : "Grid-following");
+    const tie = g("closed.tie", i) > 0.5;
+    pTie("", tie ? "=" : "/", tie ? "Closed" : "Open");
+    let lo = Infinity, hi = -Infinity, loBus = "";
+    dcBuses.forEach((b) => { const v = g("v." + b, i); if (v < lo) { lo = v; loBus = b; } if (v > hi) hi = v; });
+    const pu = lo / VN, puHi = hi / VN;
+    if (pu < 0.9) pVolt("crit", "✕", "Low, " + pu.toFixed(2) + " pu");
+    else if (pu < 0.95 || puHi > 1.05) pVolt("warn", "!", pu < 0.95 ? "Sagging, " + pu.toFixed(2) + " pu" : "High, " + puHi.toFixed(2) + " pu");
+    else pVolt("good", "✓", "Within ±5%");
+    const uns = sum(unservedKeys, i);
+    pUns(uns > 0.05 ? "crit" : "good", uns > 0.05 ? "✕" : "✓", uns > 0.05 ? kw(uns) + " unserved" : "Fully served");
+
+    tV(pu.toFixed(3), "pu", lo.toFixed(0) + " V at " + loBus);
+    const f = g("f.MAIN", i);
+    tF(f.toFixed(3), "Hz", (f - F0 >= 0 ? "+" : "−") + Math.abs(f - F0).toFixed(3) + " Hz from nominal");
+    const pg = g("p.grid", i);
+    tG(Math.abs(pg).toFixed(1), "kW", !on ? "Grid disconnected" : pg >= 0 ? "Importing" : "Exporting");
+    tL((-sum(loadKeys, i)).toFixed(1), "kW", loadKeys.length + " AC and DC loads");
+    tR(sum(renKeys, i, "p.").toFixed(1), "kW", "of " + sum(renKeys, i, "avail.").toFixed(1) + " kW available");
+    const ps = sum(stoKeys, i, "p.");
+    tS(Math.abs(ps).toFixed(1), "kW", Math.abs(ps) < 0.05 ? "Idle" : ps > 0 ? "Discharging" : "Charging");
+    tFC(sum(fcKeys, i).toFixed(1), "kW", fcKeys.length + " units");
+  });
+
+  /* ------------------------------------------------------------------ charts */
+  const TYPE_COLOR = { Battery: "--s1", FuelCell: "--s2", EV: "--s3", SolarPV: "--s4", Wind: "--s5", SuperCap: "--s7" };
+  const mgSeries = (mg) => Object.keys(DEV).filter((n) => n.startsWith(mg + ".") && S["p." + n])
+    .sort((a, b) => Object.keys(TYPE_COLOR).indexOf(a.split(".")[1]) - Object.keys(TYPE_COLOR).indexOf(b.split(".")[1]))
+    .map((n) => ({ key: "p." + n, label: NAMES[n.split(".")[1]], color: TYPE_COLOR[n.split(".")[1]] }));
+  const CHARTS = [
+    { title: "DC bus voltage (V)", digits: 0, series: [
+      { key: "v.DC1", label: "DC bus 1", color: "--s1" }, { key: "v.DCC", label: "Common DC bus", color: "--s2" },
+      { key: "v.MG1", label: "Microgrid 01", color: "--s3" }, { key: "v.MG2", label: "Microgrid 02", color: "--s4" },
+      { key: "v.MG3", label: "Microgrid 03", color: "--s5" }] },
+    { title: "AC frequency (Hz)", digits: 3, minSpan: 0.1, series: [
+      { key: "f.MAIN", label: "Main AC bus", color: "--s1" }, { key: "f.AC1", label: "AC bus 1", color: "--s2" },
+      { key: "f.AC2", label: "AC bus 2", color: "--s3" }] },
+    { title: "Converter and grid power (kW)", digits: 1, series: [
+      { key: "p.IBR01", label: "IBR 01, AC→DC", color: "--s1" }, { key: "p.IBR02", label: "IBR 02, AC→DC", color: "--s2" },
+      { key: "p.grid", label: "Grid import", color: "--s3" }] },
+    { title: "Source power into the bus (kW)", digits: 1, tabs: ["MG1", "MG2", "MG3"], series: mgSeries("MG1") },
+  ];
+  const cursors = [];
+  function niceStep(span, n) {
+    const raw = span / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+    return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
+  }
+  function makeChart(def) {
+    const card = html("div", "card chart", $("charts"));
+    const head = html("div", "head", card);
+    html("h2", "", head, def.title);
+    if (def.tabs) {
+      const tabs = html("div", "tabs", head);
+      def.tabs.forEach((mg, n) => {
+        const b = html("button", "", tabs, "Microgrid 0" + (n + 1));
+        b.type = "button"; b.setAttribute("aria-pressed", n === 0);
+        b.onclick = () => {
+          tabs.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+          def.series = mgSeries(mg); draw(); cur(idx);
+        };
+      });
+    }
+    const legend = html("div", "legend", card);
+    const plot = svg("svg", { class: "plot", height: 190 }, card);
+    let sx, sy, dots = [], vals = [], line;
+    const M = { l: 46, r: 10, t: 8, b: 22 }, H = 190;
+    function draw() {
+      const W = Math.max(280, Math.floor(card.clientWidth - 30));
+      plot.setAttribute("width", W); plot.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      plot.textContent = ""; legend.textContent = ""; dots = []; vals = [];
+      let lo = Infinity, hi = -Infinity;
+      def.series.forEach((s) => S[s.key].forEach((v) => { if (v < lo) lo = v; if (v > hi) hi = v; }));
+      if (hi - lo < (def.minSpan || 1e-6)) { const m = (hi + lo) / 2, h = (def.minSpan || 1) / 2; lo = m - h; hi = m + h; }
+      const step = niceStep(hi - lo, 4);
+      lo = Math.floor(lo / step + 1e-9) * step; hi = Math.ceil(hi / step - 1e-9) * step;
+      sx = (t) => M.l + (t - T0) / (TEND - T0) * (W - M.l - M.r);
+      sy = (v) => H - M.b - (v - lo) / (hi - lo) * (H - M.t - M.b);
+      const dec = step >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(step)));
+      for (let v = lo; v <= hi + step * 1e-6; v += step) {
+        svg("line", { class: Math.abs(v) < step * 1e-6 ? "ax" : "g", x1: M.l, x2: W - M.r, y1: sy(v), y2: sy(v) }, plot);
+        svg("text", { x: M.l - 6, y: sy(v) + 4, "text-anchor": "end" }, plot, v.toFixed(dec).replace("-", "−"));
+      }
+      const xs = niceStep(TEND - T0, W < 420 ? 4 : 6);
+      for (let t = Math.ceil(T0 / xs) * xs; t <= TEND + 1e-9; t += xs)
+        svg("text", { x: sx(t), y: H - 5, "text-anchor": "middle" }, plot, +t.toFixed(2) + " s");
+      svg("line", { class: "ax", x1: M.l, x2: W - M.r, y1: H - M.b, y2: H - M.b }, plot);
+      DATA.events.forEach((e) => { svg("line", { class: "ev", x1: sx(e.t), x2: sx(e.t), y1: M.t, y2: H - M.b }, plot); });
+      def.series.forEach((s) => {
+        const a = S[s.key]; let d = "";
+        for (let i = 0; i < N; i++) d += (i ? "L" : "M") + sx(T[i]).toFixed(1) + "," + sy(a[i]).toFixed(1);
+        svg("path", { class: "ln", d, style: `stroke:var(${s.color})` }, plot);
+        const item = html("span", "", legend);
+        const sw = html("i", "sw", item); sw.style.background = `var(${s.color})`;
+        item.appendChild(document.createTextNode(s.label));
+        vals.push(html("b", "", item));
+      });
+      line = svg("line", { class: "cur", y1: M.t, y2: H - M.b }, plot);
+      def.series.forEach((s) => dots.push(svg("circle", { class: "dot", r: 4.5, style: `fill:var(${s.color})` }, plot)));
+    }
+    function cur(i) {
+      const x = sx(T[i]);
+      line.setAttribute("x1", x); line.setAttribute("x2", x);
+      def.series.forEach((s, n) => {
+        const v = S[s.key][i];
+        dots[n].setAttribute("cx", x); dots[n].setAttribute("cy", sy(v));
+        vals[n].textContent = v.toFixed(def.digits).replace("-", "−");
+      });
+    }
+    const scrubTo = (ev) => {
+      const r = plot.getBoundingClientRect(), W = r.width;
+      const f = Math.min(1, Math.max(0, (ev.clientX - r.left - M.l) / (W - M.l - M.r)));
+      seek(T0 + f * (TEND - T0));
+    };
+    plot.addEventListener("pointerdown", (ev) => { plot.setPointerCapture(ev.pointerId); scrubTo(ev); });
+    plot.addEventListener("pointermove", (ev) => { if (ev.buttons) scrubTo(ev); });
+    draw();
+    cursors.push(cur);
+    return draw;
+  }
+  const redraws = CHARTS.map(makeChart);
+  redraws.forEach((d) => d());
+  let rz;
+  window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { redraws.forEach((d) => d()); render(true); }, 120); });
+
+  /* ------------------------------------------------------------------ table */
+  const tbl = $("table"), tcells = {};
+  const unitOf = (k) => k.startsWith("v.") ? "V" : k.startsWith("i.") ? "A" : k.startsWith("f.") ? "Hz"
+    : k.startsWith("soc.") ? "fraction" : k.startsWith("h2_kg.") ? "kg" : /^(p|avail|unserved)\./.test(k) ? "kW" : "0 / 1";
+  const hr = html("tr", "", tbl); ["Signal", "Value", "Unit"].forEach((h) => html("th", "", hr, h));
+  keys.slice().sort().forEach((k) => {
+    const r = html("tr", "", tbl); html("td", "", r, k); tcells[k] = html("td", "n", r); html("td", "", r, unitOf(k));
+  });
+  function fillTable(i) { for (const k in tcells) tcells[k].textContent = String(S[k][i]).replace("-", "−"); }
+  $("tablebox").addEventListener("toggle", () => { if ($("tablebox").open) fillTable(idx); });
+
+  /* ------------------------------------------------------------------ transport */
+  let idx = -1, simT = T0, playing = false, speed = 1, last = 0;
+  const scrub = $("scrub"), playBtn = $("play"), clock = $("clock");
+  scrub.max = N - 1;
+  const evBtns = DATA.events.map((e) => {
+    const b = html("button", "", $("events"));
+    b.type = "button";
+    html("b", "", b, e.t.toFixed(1) + " s"); b.appendChild(document.createTextNode("  " + e.label));
+    b.onclick = () => seek(e.t);
+    return b;
+  });
+  function indexAt(t) {
+    let lo = 0, hi = N - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (T[m] <= t) lo = m; else hi = m - 1; }
+    return lo;
+  }
+  function render(force) {
+    const i = indexAt(simT);
+    if (i === idx && !force) return;
+    idx = i;
+    updaters.forEach((u) => u(i));
+    cursors.forEach((c) => c(i));
+    flows.forEach((f) => {
+      const m = Math.abs(f.value(i));
+      f.el.style.opacity = m < 0.3 ? 0 : 0.3 + 0.7 * Math.min(1, m / 60);
+    });
+    scrub.value = i;
+    clock.textContent = simT.toFixed(2) + " s / " + TEND.toFixed(2) + " s";
+    evBtns.forEach((b, n) => b.classList.toggle("past", DATA.events[n].t <= simT + 1e-9));
+    if ($("tablebox").open) fillTable(i);
+  }
+  function seek(t) { simT = Math.min(TEND, Math.max(T0, t)); render(); }
+  function setPlaying(p) {
+    playing = p; playBtn.textContent = p ? "Pause" : simT >= TEND ? "Replay" : "Play";
+    if (p) { last = performance.now(); requestAnimationFrame(tick); }
+  }
+  function tick(now) {
+    if (!playing) return;
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    simT += dt * speed;
+    if (simT >= TEND) { simT = TEND; render(); setPlaying(false); return; }
+    render();
+    if (!reduced) flows.forEach((f) => {
+      const v = f.value(idx), m = Math.abs(v);
+      if (m < 0.3) return;
+      f.off -= Math.sign(v) * dt * (18 + 70 * Math.min(1, m / 80));
+      f.el.style.strokeDashoffset = f.off;
+    });
+    requestAnimationFrame(tick);
+  }
+  playBtn.onclick = () => { if (!playing && simT >= TEND) simT = T0; setPlaying(!playing); };
+  $("speed").onchange = (e) => { speed = +e.target.value; };
+  scrub.oninput = () => { simT = T[+scrub.value]; render(); };
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "SELECT" || e.target.tagName === "BUTTON" || e.target.tagName === "SUMMARY") return;
+    if (e.key === " ") { e.preventDefault(); playBtn.click(); }
+  });
+
+  seek(DATA.meta.start != null ? DATA.meta.start : T0);
+  render(true);
+  if (!reduced && DATA.meta.autoplay) setPlaying(true); else setPlaying(false);
+})();
+</script>

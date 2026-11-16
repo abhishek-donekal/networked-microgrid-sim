@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Microgrid Live Simulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232a78d6'/%3E%3Cpath d='M9 2 4 9h3l-1 5 6-7H8z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+[hidden] { display: none !important; }
+/* Live mode: the Python model runs in the browser (Pyodide); controls on the
+   left act on the running simulation, diagram and rolling charts update live. */
+:root {
+  --page: #f9f9f7; --card: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10); --wash: rgba(11,11,11,.05);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s7: #6250d6;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+  --box: #f1f0ec; --flow: #0b0b0b;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0d0d0d; --card: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10); --wash: rgba(255,255,255,.07);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s7: #9085e9;
+    --box: #242422; --flow: #f0efec; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 var(--sans); }
+.wrap { max-width: 1340px; margin: 0 auto; padding: 20px max(16px, env(safe-area-inset-right, 0px)) 40px max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: 14px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
+h2 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
+.sub { color: var(--ink2); margin: 2px 0 0; }
+.sub a { color: var(--s1); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+.scroll { overflow-x: auto; }
+
+#loader { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+#loader .bar { width: min(420px, 100%); height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+#loader .bar i { display: block; height: 100%; width: 0; background: var(--s1); transition: width .3s; }
+#loader .err { color: var(--crit); }
+
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+button, select { font: inherit; color: var(--ink); background: var(--box); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover, select:hover { background: var(--wash); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+button[disabled] { opacity: .45; cursor: default; }
+#runbtn { min-width: 84px; font-weight: 600; background: var(--s1); color: #fff; border-color: transparent; }
+#clock { font-variant-numeric: tabular-nums; font-weight: 600; margin-left: auto; }
+.rtbadge { font-size: 12px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+
+.main { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
+.controls { display: flex; flex-direction: column; gap: 14px; }
+.ctl { display: flex; flex-direction: column; gap: 8px; }
+.ctl label { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--ink2); }
+.ctl label b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.ctl input[type=range] { width: 100%; accent-color: var(--s1); margin: 0; }
+.sw { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.sw button { font-size: 12px; padding: 3px 10px; min-width: 72px; }
+.sw button.on { background: var(--good); color: #fff; border-color: transparent; }
+.sw button.off { background: var(--crit); color: #fff; border-color: transparent; }
+
+.status { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 11px 3px 4px; font-size: 12.5px; }
+.pill i { font-style: normal; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--muted); }
+.pill.good i { background: var(--good); } .pill.warn i { background: var(--warn); color: #0b0b0b; } .pill.crit i { background: var(--crit); }
+.pill span { color: var(--ink2); } .pill b { font-weight: 600; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.tile { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--ink2); }
+.tile .v { font-size: 20px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.tile .v small { font-size: 12px; font-weight: 500; color: var(--ink2); }
+.tile .d { font-size: 11.5px; color: var(--muted); }
+
+#diagram { display: block; width: 100%; min-width: 900px; height: auto; font-family: var(--sans); }
+#diagram text { fill: var(--ink); font-size: 11px; }
+#diagram .dim { fill: var(--ink2); }
+#diagram .val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+#diagram .ttl { font-size: 14px; font-weight: 600; }
+#diagram .wire { stroke: var(--axis); stroke-width: 2; fill: none; }
+#diagram .flow { stroke: var(--flow); stroke-width: 2.6; fill: none; stroke-dasharray: 5 11; stroke-linecap: round; }
+#diagram .bus { stroke-width: 7; }
+#diagram .bus.ac { stroke: var(--s1); } #diagram .bus.dc { stroke: var(--s2); }
+#diagram .bus.dead { stroke: var(--muted); }
+#diagram .box { fill: var(--box); stroke: var(--axis); stroke-width: 1.2; }
+#diagram .frame { fill: none; stroke: var(--axis); stroke-width: 1.2; stroke-dasharray: 4 4; }
+#diagram .ibr { fill: var(--card); stroke: var(--ink); stroke-width: 1.8; }
+#diagram .brk { fill: var(--ink); stroke: var(--ink); stroke-width: 1.6; cursor: pointer; }
+#diagram .brk.open { fill: var(--card); stroke: var(--crit); }
+#diagram .brkx { stroke: var(--crit); stroke-width: 1.6; pointer-events: none; }
+#diagram .socbg { fill: var(--grid); } #diagram .socfg { fill: var(--s3); }
+.key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink2); margin-top: 8px; }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.ksw { width: 18px; height: 4px; border-radius: 2px; display: inline-block; }
+.ksq { width: 10px; height: 10px; display: inline-block; border: 1.6px solid var(--ink); background: var(--ink); }
+.ksq.open { background: var(--card); border-color: var(--crit); }
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--ink2); margin: 2px 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+canvas.plot { width: 100%; height: 170px; display: block; }
+.note { color: var(--muted); font-size: 12px; margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Microgrid Live Simulator</h1>
+    <p class="sub">The hybrid AC/DC networked-microgrid model running <b>live in your browser</b> (Python via WebAssembly).
+      Trip breakers and move the sliders while it runs. <a href="playback.html">Recorded baseline scenario</a> ·
+      <a href="architecture.svg">architecture</a>.</p>
+  </header>
+
+  <section class="card" id="loader">
+    <div>Loading the Python runtime (~10 MB, first visit only)… <b id="lstage">starting</b></div>
+    <div class="bar"><i id="lbar"></i></div>
+  </section>
+
+  <div id="app" hidden>
+  <section class="card">
+    <div class="row">
+      <button id="runbtn" type="button">Pause</button>
+      <label class="row" for="speed" style="gap:6px">Speed
+        <select id="speed">
+          <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+          <option value="2">2×</option><option value="5">5×</option>
+        </select>
+      </label>
+      <button id="resetbtn" type="button">Reset</button>
+      <span class="rtbadge" id="rt"></span>
+      <output id="clock"></output>
+    </div>
+  </section>
+
+  <div class="main">
+    <aside class="controls">
+      <section class="card ctl">
+        <h2>Breakers</h2>
+        <div class="sw"><span>Utility grid</span><button data-brk="grid" type="button"></button></div>
+        <div class="sw"><span>DC tie-line</span><button data-brk="tie" type="button"></button></div>
+        <div class="sw"><span>Feeder MG1</span><button data-brk="feeder_MG1" type="button"></button></div>
+        <div class="sw"><span>Feeder MG2</span><button data-brk="feeder_MG2" type="button"></button></div>
+        <div class="sw"><span>Feeder MG3</span><button data-brk="feeder_MG3" type="button"></button></div>
+      </section>
+      <section class="card ctl">
+        <h2>Loads &amp; renewables</h2>
+        <label for="loadMG2">MG2 load <b id="loadMG2v">35 kW</b></label>
+        <input id="loadMG2" type="range" min="5" max="90" value="35" step="1">
+        <label for="pv">Solar available <b id="pvv">30 kW</b></label>
+        <input id="pv" type="range" min="0" max="40" value="30" step="1">
+        <label for="wind">Wind available <b id="windv">15 kW</b></label>
+        <input id="wind" type="range" min="0" max="25" value="15" step="1">
+      </section>
+      <section class="card">
+        <h2>Try this</h2>
+        <p class="note" style="color:var(--ink2)">Open the <b>Utility grid</b> breaker: both IBRs switch to
+        grid-forming and frequency droops. Then open the <b>DC tie-line</b> and watch the two sides separate.
+        Drop solar to zero to see the fuel cells ramp.</p>
+      </section>
+    </aside>
+
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <section class="status" id="status"></section>
+      <section class="tiles" id="tiles"></section>
+      <section class="card">
+        <h2>System now <span style="font-weight:400;color:var(--muted)">— click any breaker square in the diagram to toggle it</span></h2>
+        <div class="scroll"><svg id="diagram" viewBox="0 0 1200 745" role="img" aria-label="Live one-line diagram"></svg></div>
+        <div class="key">
+          <span><i class="ksw" style="background:var(--s1)"></i>AC bus</span>
+          <span><i class="ksw" style="background:var(--s2)"></i>DC bus</span>
+          <span><i class="ksq"></i>Closed</span><span><i class="ksq open"></i>Open</span>
+          <span>Moving dashes show power-flow direction.</span>
+        </div>
+      </section>
+      <section class="charts" id="charts"></section>
+    </div>
+  </div>
+
+  <p class="note">Averaged converter models; AC side is active power and frequency only. Browser mode runs at a
+  1 ms step with the damped (Euler) solver, so fast L-C transients are smoothed. All ratings are placeholder
+  values, not testbed data. Source: the <code>mgsim</code> package in this repository.</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+(async function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const stage = (s, pc) => { $("lstage").textContent = s; $("lbar").style.width = pc + "%"; };
+
+  /* ---------------- boot python ---------------- */
+  let py, pyTick, pySet;
+  try {
+    stage("downloading runtime", 10);
+    py = await loadPyodide();
+    stage("loading numpy", 45);
+    await py.loadPackage("numpy");
+    stage("fetching model", 70);
+    const files = ["__init__.py", "core.py", "devices.py", "ac.py", "system.py", "control.py"];
+    py.FS.mkdirTree("/home/pyodide/mgsim");
+    for (const f of files) {
+      const r = await fetch("py/mgsim/" + f);
+      if (!r.ok) throw new Error("fetch " + f + ": " + r.status);
+      py.FS.writeFile("/home/pyodide/mgsim/" + f, await r.text());
+    }
+    stage("starting simulation", 85);
+    await py.runPythonAsync(`
+import json
+from mgsim import build_system, default_params
+from mgsim.core import Const
+
+SIM = None
+def reset():
+    global SIM
+    p = default_params()
+    p["solver"] = "euler"          # damped solver: stable at the 1 ms browser step
+    SIM = build_system(p, dt=1e-3, record_every=10**9)
+    SIM.initialize(2.0)
+
+def tick(dt_sim):
+    SIM.run(SIM.t + dt_sim)
+    row = {"t": SIM.t}
+    for name, i in SIM.dc.index.items():
+        row["v." + name] = SIM.dc.v[i]
+    for name, ln in SIM.dc.lines.items():
+        row["i." + name] = SIM.dc.line_current(name)
+        row["closed." + name] = 1.0 if ln["closed"] else 0.0
+    for d in SIM.dev.values():
+        d.signals(row)
+    SIM.ac.signals(row)
+    return json.dumps({k: round(float(v), 4) for k, v in row.items()})
+
+def control(cmd, name, value):
+    if cmd == "breaker":
+        SIM.breaker(name, bool(value))
+    elif cmd == "load":
+        SIM.dev[name].demand = Const(value)
+    elif cmd == "avail":
+        SIM.dev[name].p_avail = Const(value)
+
+reset()
+`);
+    pyTick = py.globals.get("tick");
+    pySet = py.globals.get("control");
+    stage("ready", 100);
+  } catch (e) {
+    $("loader").innerHTML = '<div class="err">Could not start the in-browser runtime: ' +
+      String(e).replace(/</g, "&lt;") + '<br>Try a current Chrome/Edge/Firefox, or open the ' +
+      '<a href="playback.html">recorded scenario</a> instead.</div>';
+    return;
+  }
+
+  /* ---------------- helpers ---------------- */
+  let F = JSON.parse(pyTick(0));            // latest frame
+  const G = (k) => (k in F ? F[k] : 0);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = (tag, attrs, parent, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const html = (tag, cls, parent, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const kw = (x, signed) => (signed && x > 0.05 ? "+" : "") +
+    (Math.abs(x) < 0.05 ? "0.0" : (x / 1000).toFixed(1)).replace("-", "−") + " kW";
+  const VN = 750, F0 = 60;
+  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------------- diagram (same geometry as the playback page) ---------------- */
+  const D = $("diagram");
+  const updaters = [], flows = [];
+  function wire(d, value) {
+    svg("path", { class: "wire", d }, D);
+    flows.push({ el: svg("path", { class: "flow", d }, D), value, off: 0 });
+  }
+  function bus(key, x1, x2, y, kind, label, lx, ly, anchor) {
+    const ln = svg("line", { class: "bus " + kind, x1, x2, y1: y, y2: y }, D);
+    const tx = svg("text", { x: lx, y: ly, "text-anchor": anchor }, D);
+    updaters.push(() => {
+      if (kind === "ac") {
+        const live = G("energized." + key) > 0.5;
+        ln.setAttribute("class", "bus ac" + (live ? "" : " dead"));
+        tx.textContent = label + " · " + (live ? G("f." + key).toFixed(3) + " Hz" : "de-energised");
+      } else {
+        const v = G("v." + key);
+        tx.textContent = (label ? label + " · " : "") + v.toFixed(0) + " V (" + (v / VN).toFixed(2) + " pu)";
+      }
+    });
+  }
+  function breaker(name, x, y) {
+    const r = svg("rect", { class: "brk", x: x - 7, y: y - 7, width: 14, height: 14 }, D);
+    const xx = svg("line", { class: "brkx", x1: x - 10, y1: y - 10, x2: x + 10, y2: y + 10 }, D);
+    svg("title", {}, r, "Toggle breaker " + name);
+    r.addEventListener("click", () => setBreaker(name, G("closed." + name) < 0.5));
+    updaters.push(() => {
+      const open = G("closed." + name) < 0.5;
+      r.setAttribute("class", "brk" + (open ? " open" : ""));
+      xx.setAttribute("visibility", open ? "visible" : "hidden");
+    });
+  }
+  function loadBox(name, x, y, w, label, path) {
+    wire(path, () => -G("p." + name));
+    svg("rect", { class: "box", x, y, width: w, height: 50, rx: 3 }, D);
+    svg("text", { class: "dim", x: x + w / 2, y: y + 19, "text-anchor": "middle" }, D, label);
+    const v = svg("text", { class: "val", x: x + w / 2, y: y + 38, "text-anchor": "middle" }, D);
+    updaters.push(() => { v.textContent = kw(-G("p." + name)); });
+  }
+  const NAMES = { Battery: "Battery", FuelCell: "Fuel cell", EV: "EV", SolarPV: "Solar PV", Wind: "Wind", SuperCap: "SuperCap" };
+  function device(name, cx) {
+    const kind = name.split(".")[1], x = cx - 35, y = 560;
+    wire(`M${cx},${y} L${cx},500`, () => G("p." + name));
+    svg("rect", { class: "box", x, y, width: 70, height: 80, rx: 3 }, D);
+    svg("text", { x: cx, y: y + 18, "text-anchor": "middle" }, D, NAMES[kind]);
+    const v = svg("text", { class: "val", x: cx, y: y + 38, "text-anchor": "middle" }, D);
+    const extra = svg("text", { class: "dim", x: cx, y: y + 71, "text-anchor": "middle", "font-size": 10 }, D);
+    let bar = null;
+    if (("soc." + name) in F) {
+      svg("rect", { class: "socbg", x: cx - 27, y: y + 48, width: 54, height: 6, rx: 3 }, D);
+      bar = svg("rect", { class: "socfg", x: cx - 27, y: y + 48, width: 0, height: 6, rx: 3 }, D);
+    }
+    updaters.push(() => {
+      v.textContent = kw(G("p." + name), true).replace(" kW", "");
+      if (bar) {
+        const soc = G("soc." + name);
+        bar.setAttribute("width", Math.max(0, 54 * soc));
+        extra.textContent = "charge " + (soc * 100).toFixed(1) + "%";
+      } else if (("avail." + name) in F) {
+        extra.textContent = "of " + (G("avail." + name) / 1000).toFixed(1) + " kW";
+      } else extra.textContent = "kW";
+    });
+  }
+  function ibr(name, label, cx) {
+    const val = () => G("p." + name);
+    wire(`M${cx},180 L${cx},225`, val);
+    wire(`M${cx},285 L${cx},330`, val);
+    svg("rect", { class: "ibr", x: cx - 78, y: 225, width: 156, height: 60, rx: 3 }, D);
+    const a = svg("text", { class: "ttl", x: cx, y: 244, "text-anchor": "middle", "font-size": 12 }, D);
+    const b = svg("text", { class: "val", x: cx, y: 262, "text-anchor": "middle" }, D);
+    const c = svg("text", { class: "dim", x: cx, y: 277, "text-anchor": "middle", "font-size": 10 }, D);
+    updaters.push(() => {
+      const p = G("p." + name);
+      a.textContent = label + " · " + (G("gfm." + name) > 0.5 ? "grid-forming" : "grid-following");
+      b.textContent = kw(Math.abs(p));
+      c.textContent = Math.abs(p) < 50 ? "no transfer" : p > 0 ? "AC → DC" : "DC → AC";
+    });
+  }
+  [[30, 440, "Microgrid 01"], [500, 320, "Microgrid 02"], [850, 320, "Microgrid 03"]].forEach(([x, w, t]) => {
+    svg("rect", { class: "frame", x, y: 400, width: w, height: 330, rx: 6 }, D);
+    svg("text", { class: "ttl", x: x + w / 2, y: 715, "text-anchor": "middle" }, D, t);
+  });
+  wire("M600,60 L600,110", () => G("p.grid"));
+  svg("rect", { class: "box", x: 530, y: 10, width: 140, height: 50, rx: 3 }, D);
+  svg("text", { class: "ttl", x: 600, y: 30, "text-anchor": "middle", "font-size": 12 }, D, "Utility grid");
+  const gridTxt = svg("text", { class: "val", x: 600, y: 49, "text-anchor": "middle" }, D);
+  updaters.push(() => {
+    const p = G("p.grid"), on = G("closed.grid") > 0.5;
+    gridTxt.textContent = !on ? "disconnected" : kw(Math.abs(p)) + (p >= 0 ? " import" : " export");
+  });
+  const acIbr = (n) => { const p = G("p." + n); return p >= 0 ? p / 0.97 : p * 0.97; };
+  wire("M420,110 L420,145 L250,145 L250,180", () => G("closed.feeder_AC1") > 0.5 ? -G("p.ACLoad.1") + acIbr("IBR01") : 0);
+  wire("M780,110 L780,145 L950,145 L950,180", () => G("closed.feeder_AC2") > 0.5 ? -G("p.ACLoad.2") + acIbr("IBR02") : 0);
+  loadBox("ACLoad.common", 395, 30, 110, "Common AC load", "M450,110 L450,80");
+  loadBox("ACLoad.1", 135, 110, 100, "Local AC load 1", "M185,180 L185,160");
+  loadBox("ACLoad.2", 965, 110, 100, "Local AC load 2", "M1015,180 L1015,160");
+  ibr("IBR01", "IBR 01", 250);
+  ibr("IBR02", "IBR 02", 950);
+  wire("M420,330 L420,362 L580,362 L580,330", () => G("i.tie") * G("v.DC1"));
+  const tieTxt = svg("text", { class: "dim", x: 500, y: 384, "text-anchor": "middle" }, D);
+  updaters.push(() => {
+    const p = G("i.tie") * G("v.DC1");
+    tieTxt.textContent = G("closed.tie") < 0.5 ? "Tie-line open" :
+      "Tie-line " + kw(Math.abs(p)) + (Math.abs(p) < 50 ? "" : p > 0 ? " →" : " ←");
+  });
+  [["feeder_MG1", 250, "DC1"], ["feeder_MG2", 660, "DCC"], ["feeder_MG3", 1010, "DCC"]].forEach(([n, x, up]) => {
+    wire(`M${x},330 L${x},500`, () => G("i." + n) * G("v." + up));
+  });
+  loadBox("DCLoad.common", 640, 255, 110, "Common DC load", "M695,330 L695,305");
+  loadBox("MG1.Load", 45, 415, 100, "Local DC load", "M95,500 L95,465");
+  loadBox("MG2.Load", 515, 415, 100, "Local DC load", "M565,500 L565,465");
+  loadBox("MG3.Load", 865, 415, 100, "Local DC load", "M915,500 L915,465");
+  const DEV = { "MG1.Battery": 85, "MG1.FuelCell": 170, "MG1.EV": 255, "MG1.SolarPV": 340, "MG1.Wind": 425,
+    "MG2.SuperCap": 545, "MG2.Battery": 622, "MG2.FuelCell": 699, "MG2.EV": 776,
+    "MG3.Battery": 910, "MG3.FuelCell": 1010, "MG3.EV": 1110 };
+  for (const n in DEV) if (("p." + n) in F) device(n, DEV[n]);
+  bus("MAIN", 400, 800, 110, "ac", "Main AC bus", 812, 114, "start");
+  bus("AC1", 130, 370, 180, "ac", "AC bus 1", 262, 199, "start");
+  bus("AC2", 830, 1070, 180, "ac", "AC bus 2", 938, 199, "end");
+  bus("DC1", 50, 450, 330, "dc", "DC bus 1", 50, 320, "start");
+  bus("DCC", 550, 1150, 330, "dc", "Common DC bus", 1150, 320, "end");
+  bus("MG1", 45, 455, 500, "dc", "", 455, 489, "end");
+  bus("MG2", 508, 812, 500, "dc", "", 812, 489, "end");
+  bus("MG3", 865, 1155, 500, "dc", "", 1155, 489, "end");
+  breaker("grid", 600, 85); breaker("feeder_AC1", 335, 145); breaker("feeder_AC2", 865, 145);
+  breaker("tie", 500, 362); breaker("feeder_MG1", 250, 365); breaker("feeder_MG2", 660, 365); breaker("feeder_MG3", 1010, 365);
+
+  /* ---------------- status + tiles ---------------- */
+  const keys = Object.keys(F);
+  const dcBuses = keys.filter((k) => k.startsWith("v.")).map((k) => k.slice(2));
+  const loadKeys = keys.filter((k) => k.startsWith("p.") && /Load/.test(k));
+  const unservedKeys = keys.filter((k) => k.startsWith("unserved."));
+  const renKeys = keys.filter((k) => k.startsWith("avail.")).map((k) => k.slice(6));
+  const stoKeys = keys.filter((k) => k.startsWith("soc.")).map((k) => k.slice(4));
+  const sum = (ks, pre) => ks.reduce((a, k) => a + G((pre || "") + k), 0);
+  function pill(label) {
+    const p = html("div", "pill", $("status"));
+    const ic = html("i", "", p); html("span", "", p, label);
+    const b = html("b", "", p);
+    return (cls, icon, text) => { p.className = "pill " + cls; ic.textContent = icon; b.textContent = text; };
+  }
+  const pGrid = pill("Grid"), pI1 = pill("IBR 01"), pI2 = pill("IBR 02"),
+    pVolt = pill("DC voltage"), pUns = pill("AC load");
+  function tile(label) {
+    const t = html("div", "tile", $("tiles"));
+    html("div", "k", t, label);
+    const v = html("div", "v", t), d = html("div", "d", t);
+    return (value, unit, detail) => { v.textContent = value + " "; html("small", "", v, unit); d.textContent = detail; };
+  }
+  const tV = tile("Lowest DC bus"), tF = tile("AC frequency"), tG = tile("Grid exchange"),
+    tL = tile("Load served"), tR = tile("Renewables"), tS = tile("Storage, net");
+  updaters.push(() => {
+    const on = G("closed.grid") > 0.5;
+    pGrid(on ? "good" : "warn", on ? "✓" : "!", on ? "Connected" : "Islanded");
+    pI1("", "~", G("gfm.IBR01") > 0.5 ? "Grid-forming" : "Grid-following");
+    pI2("", "~", G("gfm.IBR02") > 0.5 ? "Grid-forming" : "Grid-following");
+    let lo = Infinity, loBus = "";
+    dcBuses.forEach((b) => { const v = G("v." + b); if (v < lo) { lo = v; loBus = b; } });
+    const pu = lo / VN;
+    if (pu < 0.9) pVolt("crit", "✕", pu.toFixed(2) + " pu");
+    else if (pu < 0.95) pVolt("warn", "!", pu.toFixed(2) + " pu");
+    else pVolt("good", "✓", "Within ±5%");
+    const uns = sum(unservedKeys);
+    pUns(uns > 50 ? "crit" : "good", uns > 50 ? "✕" : "✓", uns > 50 ? kw(uns) + " unserved" : "Served");
+    tV(pu.toFixed(3), "pu", lo.toFixed(0) + " V at " + loBus);
+    const f = G("f.MAIN");
+    tF(f.toFixed(3), "Hz", (f >= F0 ? "+" : "−") + Math.abs(f - F0).toFixed(3) + " Hz");
+    const pg = G("p.grid");
+    tG(Math.abs(pg / 1000).toFixed(1), "kW", !on ? "Disconnected" : pg >= 0 ? "Importing" : "Exporting");
+    tL((-sum(loadKeys) / 1000).toFixed(1), "kW", "all AC and DC loads");
+    tR((sum(renKeys, "p.") / 1000).toFixed(1), "kW", "of " + (sum(renKeys, "avail.") / 1000).toFixed(1) + " kW available");
+    const ps = sum(stoKeys, "p.");
+    tS(Math.abs(ps / 1000).toFixed(1), "kW", Math.abs(ps) < 50 ? "Idle" : ps > 0 ? "Discharging" : "Charging");
+  });
+
+  /* ---------------- rolling charts ---------------- */
+  const WINDOW = 20;                       // seconds shown
+  const buf = { t: [] };                   // rolling buffers
+  const CHARTS = [
+    { title: "DC bus voltage (V)", digits: 0, series: [
+      ["v.DC1", "DC bus 1", "--s1"], ["v.DCC", "Common", "--s2"], ["v.MG1", "MG1", "--s3"],
+      ["v.MG2", "MG2", "--s4"], ["v.MG3", "MG3", "--s5"]] },
+    { title: "AC frequency (Hz)", digits: 3, minSpan: 0.08, series: [["f.MAIN", "Main AC bus", "--s1"]] },
+    { title: "IBR and grid power (kW)", digits: 1, scale: 1e-3, series: [
+      ["p.IBR01", "IBR 01 → DC", "--s1"], ["p.IBR02", "IBR 02 → DC", "--s2"], ["p.grid", "Grid import", "--s3"]] },
+    { title: "Storage state of charge (%)", digits: 1, scale: 100, minSpan: 2, series:
+      stoKeys.filter((k) => !/EV/.test(k)).slice(0, 4).map((k, n) =>
+        ["soc." + k, k.replace(".", " "), ["--s1", "--s2", "--s3", "--s7"][n]]) },
+  ];
+  CHARTS.forEach((c) => c.series.forEach(([k]) => { buf[k] = []; }));
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const chartUpd = CHARTS.map((def) => {
+    const card = html("div", "card", $("charts"));
+    html("h2", "", card, def.title);
+    const legend = html("div", "legend", card);
+    const vals = def.series.map(([k, label, color]) => {
+      const item = html("span", "", legend);
+      const sw = html("i", "ksw", item); sw.style.background = "var(" + color + ")";
+      item.appendChild(document.createTextNode(label));
+      return html("b", "", item);
+    });
+    const cv = html("canvas", "plot", card);
+    const ctx = cv.getContext("2d");
+    return () => {
+      const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+      if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      const sc = def.scale || 1, t1 = F.t, t0 = t1 - WINDOW;
+      let lo = Infinity, hi = -Infinity;
+      def.series.forEach(([k]) => buf[k].forEach((v) => { if (v < lo) lo = v; if (v > hi) hi = v; }));
+      lo *= sc; hi *= sc;
+      if (!isFinite(lo)) { lo = 0; hi = 1; }
+      if (hi - lo < (def.minSpan || 1e-6)) { const m = (hi + lo) / 2, h2 = (def.minSpan || 1) / 2; lo = m - h2; hi = m + h2; }
+      const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+      const ML = 44, MB = 16, MT = 4;
+      const sx = (t) => ML + (t - t0) / WINDOW * (W - ML - 6);
+      const sy = (v) => H - MB - (v * sc - lo) / (hi - lo) * (H - MT - MB);
+      ctx.font = "11px " + css("--sans");
+      ctx.fillStyle = css("--muted"); ctx.strokeStyle = css("--grid"); ctx.lineWidth = 1;
+      for (let n = 0; n <= 3; n++) {
+        const v = lo + (hi - lo) * n / 3, y = sy(v / sc);
+        ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(W - 6, y); ctx.stroke();
+        ctx.textAlign = "right"; ctx.fillText(v.toFixed(def.digits > 1 ? 2 : def.digits), ML - 5, y + 4);
+      }
+      ctx.textAlign = "center";
+      for (let t = Math.ceil(t0 / 5) * 5; t <= t1; t += 5) ctx.fillText(t.toFixed(0) + "s", sx(t), H - 3);
+      def.series.forEach(([k, label, color], n) => {
+        ctx.strokeStyle = css(color); ctx.lineWidth = 2; ctx.beginPath();
+        const tb = buf.t, vb = buf[k];
+        let started = false;
+        for (let i = 0; i < tb.length; i++) {
+          if (tb[i] < t0) continue;
+          const x = sx(tb[i]), y = sy(vb[i]);
+          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        vals[n].textContent = (vb.length ? vb[vb.length - 1] * sc : 0).toFixed(def.digits).replace("-", "−");
+      });
+    };
+  });
+
+  /* ---------------- controls ---------------- */
+  function setBreaker(name, closed) { pySet("breaker", name, closed ? 1 : 0); refreshSwitches(); }
+  const swBtns = document.querySelectorAll("[data-brk]");
+  swBtns.forEach((b) => { b.addEventListener("click", () => setBreaker(b.dataset.brk, G("closed." + b.dataset.brk) < 0.5)); });
+  function refreshSwitches() {
+    swBtns.forEach((b) => {
+      const on = G("closed." + b.dataset.brk) > 0.5;
+      b.textContent = on ? "Closed" : "Open";
+      b.className = on ? "on" : "off";
+    });
+  }
+  const slider = (id, dev, cmd, unit) => {
+    const el = $(id);
+    el.addEventListener("input", () => {
+      $(id + "v").textContent = el.value + " " + unit;
+      pySet(cmd, dev, +el.value * 1000);
+    });
+  };
+  slider("loadMG2", "MG2.Load", "load", "kW");
+  slider("pv", "MG1.SolarPV", "avail", "kW");
+  slider("wind", "MG1.Wind", "avail", "kW");
+  $("resetbtn").addEventListener("click", async () => {
+    await py.runPythonAsync("reset()");
+    buf.t.length = 0; CHARTS.forEach((c) => c.series.forEach(([k]) => { buf[k].length = 0; }));
+    ["loadMG2|35|kW", "pv|30|kW", "wind|15|kW"].forEach((s) => {
+      const [id, v, u] = s.split("|"); $(id).value = v; $(id + "v").textContent = v + " " + u;
+    });
+    F = JSON.parse(pyTick(0));
+    refreshSwitches();
+  });
+
+  /* ---------------- main loop ---------------- */
+  let running = true, speed = 1, last = performance.now(), ema = 1;
+  $("speed").onchange = (e) => { speed = +e.target.value; };
+  $("runbtn").onclick = () => { running = !running; $("runbtn").textContent = running ? "Pause" : "Run"; last = performance.now(); };
+  function frame(now) {
+    const wall = Math.min(0.1, (now - last) / 1000); last = now;
+    if (running && wall > 0) {
+      const t0 = performance.now();
+      F = JSON.parse(pyTick(wall * speed));
+      const cost = (performance.now() - t0) / 1000;
+      ema = 0.95 * ema + 0.05 * Math.min(5, (wall * speed) / Math.max(cost, 1e-4));
+      buf.t.push(F.t);
+      for (const k in buf) if (k !== "t") buf[k].push(F[k]);
+      if (buf.t.length > 3000) { buf.t.splice(0, 500); for (const k in buf) if (k !== "t") buf[k].splice(0, 500); }
+      updaters.forEach((u) => u());
+      chartUpd.forEach((c) => c());
+      if (!reduced) flows.forEach((f) => {
+        const v = f.value(), m = Math.abs(v) / 1000;
+        f.el.style.opacity = m < 0.3 ? 0 : 0.3 + 0.7 * Math.min(1, m / 60);
+        if (m >= 0.3) { f.off -= Math.sign(v) * wall * (18 + 70 * Math.min(1, m / 80)); f.el.style.strokeDashoffset = f.off; }
+      });
+      $("clock").textContent = "t = " + F.t.toFixed(1) + " s";
+      $("rt").textContent = ema > 0.95 * speed ? "real-time ✓" : "running at " + ema.toFixed(1) + "× (machine-limited)";
+    }
+    requestAnimationFrame(frame);
+  }
+  $("loader").hidden = true;
+  $("app").hidden = false;
+  refreshSwitches();
+  updaters.forEach((u) => u());
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
